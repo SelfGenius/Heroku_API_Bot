@@ -31,15 +31,23 @@ class ApiRequestError(Exception):
     """Ошибка запроса."""
 
 
+class CurrentDateError(Exception):
+    """Ошибка ключа current_date."""
+
+
+class MessageNotSentError(Exception):
+    """Ошибка отправки сообщение в телеграмм."""
+
+
 def send_message(bot, message):
     """Отправляет сообщение в Telegram чат."""
     try:
         bot.send_message(TELEGRAM_CHAT_ID, text=message)
     except telegram.error.TelegramError(message) as error:
-        raise Exception(f'Ошибка отправки сообщения:{message}.'
-                        f'Информация об ошибке: {error}')
+        raise MessageNotSentError(f'Ошибка отправки сообщения:{message}.'
+                                  f'Информация об ошибке: {error}')
     else:
-        logger.info(f'Сообщение в чат {TELEGRAM_CHAT_ID}: {message}')
+        logger.info(f'Отправлено сообщение в чат {TELEGRAM_CHAT_ID}:{message}')
 
 
 def get_api_answer(current_timestamp):
@@ -52,7 +60,7 @@ def get_api_answer(current_timestamp):
     try:
         homework = requests.get(**api_params)
         if homework.status_code != HTTPStatus.OK:
-            raise Exception(f'Ошибка {homework.status_code}')
+            raise Exception(f'Ошибка статус код ответа {homework.status_code}')
         logger.info(f'Ответ API получен с кодом {homework.status_code}')
         return homework.json()
     except Exception:
@@ -90,10 +98,21 @@ def parse_status(homework):
     verdict = HOMEWORK_VERDICTS[homework_status]
     logger.info(f'Изменился статус проверки работы - "{verdict}".')
     homeworks_comment = homework.get('reviewer_comment')
-    if homeworks_comment is None:
-        return f'Изменился статус проверки работы "{homework_name}". {verdict}'
-    return (f'Изменился статус проверки работы "{homework_name}". '
-            f' {verdict} c комментарием {homeworks_comment}')
+    bot = telegram.Bot(token=TELEGRAM_TOKEN)
+    if verdict == HOMEWORK_VERDICTS['approved']:
+        info_message = (f'Молодец! Очень горжусь тобой! Ты успешно справился с'
+                        f' этим проектом.\nРевьер оставил тебе комментарий:'
+                        f' "{homeworks_comment}" \n'
+                        f'Впереди ждут новые трудностии и новые победы.')
+        send_message(bot, info_message)
+    if verdict == HOMEWORK_VERDICTS['rejected']:
+        info_message = (f'Не буду томить ожиданием. Ревьер вернул проект на '
+                        f'доработку с комментарием "{homeworks_comment}"\nЭто'
+                        f' не повод расстраитватся и всё бросить, прежде всего'
+                        f' это новый опыт, ведь дальше будет сложнее. Отдыхни,'
+                        f' потом преступи к работе над ошибками. Удачи!')
+        send_message(bot, info_message)
+    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def check_tokens():
@@ -120,6 +139,8 @@ def main():
             if len(homework_list) > 0:
                 send_message(bot, parse_status(homework_list[0]))
             current_timestamp = response.get('current_date', current_timestamp)
+        except (CurrentDateError, MessageNotSentError) as error:
+            logger.error(error, exc_info=True)
         except Exception as error:
             logger.error(error, exc_info=True)
             send_message(bot, f'Сбой в работе программы: {error}')
